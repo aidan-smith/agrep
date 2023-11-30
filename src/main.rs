@@ -1,4 +1,5 @@
 mod ast;
+mod regex;
 
 // fn parse(pattern: &str) -> Result<ast::AST> {
 //
