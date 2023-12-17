@@ -21,16 +21,18 @@ enum Type {
 }
 
 fn main() {
-    println!("Hello, world!");
+    let pattern1 = "a{1,2}(foo|bar)[ac-z]*";
+    let pattern2 = "foo(baz).*(bar|baz)?";
+    let pattern3 = "[a-z]*";
 
-    // let pattern = "a{1,2}(foo|bar)[ac-z]*";
-    let pattern = "abc";
-    // let ast = ast::Parser::new().parse(pattern);
+    let regex1 = parse(pattern1).unwrap();
+    let regex2 = parse(pattern2).unwrap();
+    let regex3 = parse(pattern3).unwrap();
 
-
-    let regex = parse(pattern).unwrap();
-    // println!("{:#?}", regex);
-
-    let nfa = NFA::from_regex(&regex);
-    println!("{:#?}", nfa);
+    let nfa1 = NFA::from_regex(&regex1);
+    let nfa2 = NFA::from_regex(&regex2);
+    let nfa3 = NFA::from_regex(&regex3);
+    println!("{:#?}", nfa1);
+    println!("{:#?}", nfa2);
+    println!("{:#?}", nfa3);
 }

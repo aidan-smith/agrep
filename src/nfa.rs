@@ -245,15 +245,17 @@ impl<'a> NFAVM<'a> {
         let mut next_state = None;
         for transition in &self.nfa.states[self.state].transitions {
             match transition.input {
-                None => {
-                    next_state = Some(transition.next);
-                    break;
-                }
                 Some((start, end)) => {
                     if start <= self.input[self.pos] && self.input[self.pos] <= end {
                         next_state = Some(transition.next);
-                        break;
+                        if self.run() {
+                            return true;
+                        }
                     }
+                }
+                None => {
+                    next_state = Some(transition.next);
+                    break;
                 }
             }
         }
