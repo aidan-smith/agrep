@@ -9,4 +9,4 @@
 - [x] Repetitions with `'*'`, `'+'`, `'?'`, `{3}`, `{1,}`, `{1,3}`
 - [x] Anchors e.g. `^foobar$`
 - [x] Ordinary and range character classes e.g. `[A-z][0-9][!?]`
-- [ ] Groups and alternations e.g. `foo(baz|bar)`
+- [ ] Groups (w/o captures) and alternations e.g. `foo(baz|bar)`

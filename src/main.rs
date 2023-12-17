@@ -1,9 +1,17 @@
 mod ast;
 mod regex;
+mod nfa;
 
-// fn parse(pattern: &str) -> Result<ast::AST> {
-//
-// }
+use anyhow::Result;
+
+use crate::nfa::NFA;
+
+fn parse(pattern: &str) -> Result<regex::Regex> {
+    let mut parser = ast::Parser::new();
+    let ast = parser.parse(pattern)?;
+    let regex = regex::Parser::new().parse(&ast);
+    Ok(regex)
+}
 
 #[allow(dead_code)]
 enum Type {
@@ -15,11 +23,14 @@ enum Type {
 fn main() {
     println!("Hello, world!");
 
-    let pattern = "a{1,2}b[ac-z]*";
-    let ast = ast::Parser::new().parse(pattern);
+    // let pattern = "a{1,2}(foo|bar)[ac-z]*";
+    let pattern = "abc";
+    // let ast = ast::Parser::new().parse(pattern);
 
-    match ast {
-        Ok(ast) => println!("{:#?}", ast),
-        Err(err) => println!("{}", err),
-    }
+
+    let regex = parse(pattern).unwrap();
+    // println!("{:#?}", regex);
+
+    let nfa = NFA::from_regex(&regex);
+    println!("{:#?}", nfa);
 }

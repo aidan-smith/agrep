@@ -8,7 +8,10 @@ pub enum AST {
     Literal(char),
     Wildcard,
     Anchor(AnchorType),
-    Class(bool, Vec<ClassItem>), // negated: bool
+    Class {
+        negated: bool,
+        items: Vec<ClassItem>,
+    },
     Group(Box<AST>),
     Repetition(RepetitionType, Box<AST>),
     Concat(Vec<AST>),
@@ -23,11 +26,11 @@ pub enum AnchorType {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClassItem {
-    Ordinary(char),        // 'a'
-    Range(char, char),     // 'A-z'
-    Collating,             // '[.abc.]'
-    Equivalence(char),     // '[=a=]'
-    Character(NamedClass), // '[:alpha:]'
+    Ordinary(char),                   // 'a'
+    Range { start: char, end: char }, // 'A-z'
+    Collating,                        // '[.abc.]'
+    Equivalence(char),                // '[=a=]'
+    Character(NamedClass),            // '[:alpha:]'
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,10 +68,6 @@ impl NamedClass {
         }
     }
 }
-
-// struct Repetition {
-//     kind: RepetitionType,
-//     ast: AST,
 
 // }
 
@@ -183,16 +182,81 @@ impl<'a> ParserVM<'a> {
         Ok(num)
     }
 
-    fn start_group(&mut self) {
-        todo!()
+    fn start_group(&mut self, stack: Vec<AST>) -> Result<Vec<AST>> {
+        assert!(self.char() == '(');
+        if !self.next() {
+            panic!("Invalid group: unexpected eof after '('");
+        }
+        self.parser.group_stack.push(stack);
+        Ok(Vec::new())
     }
 
-    fn end_group(&mut self) {
-        todo!()
+    fn end_group(&mut self, mut stack: Vec<AST>) -> Result<Vec<AST>> {
+        assert!(self.char() == ')');
+        self.next();
+        let mut group = self
+            .parser
+            .group_stack
+            .pop()
+            .context("Invalid group: no group on stack")?;
+        let concat = match stack.len() {
+            0 => AST::Empty,
+            1 => stack.pop().unwrap(),
+            _ => AST::Concat(stack),
+        };
+        if let Some(AST::Alternation(alt)) = group.last_mut() {
+            alt.push(concat);
+        } else {
+            group.push(AST::Group(Box::new(concat)));
+        }
+        Ok(group)
     }
 
-    fn parse_alternate(&mut self) {
-        todo!()
+    fn parse_alternate(&mut self, mut stack: Vec<AST>) -> Result<Vec<AST>> {
+        assert!(self.char() == '|');
+        if !self.next() {
+            panic!("Invalid alternate: unexpected eof after '|'");
+        }
+        if self.parser.group_stack.is_empty() {
+            self.parser.group_stack.push(Vec::new());
+        }
+        let group = &mut self.parser.group_stack.last_mut().unwrap();
+        let concat = match stack.len() {
+            0 => AST::Empty,
+            1 => stack.pop().unwrap(),
+            _ => AST::Concat(stack),
+        };
+        if let Some(AST::Alternation(alt)) = group.last_mut() {
+            alt.push(concat);
+        } else {
+            group.push(AST::Alternation(vec![concat]));
+        }
+        Ok(Vec::new())
+    }
+
+    fn finish_parse(&mut self, mut stack: Vec<AST>) -> Result<AST> {
+        assert!(self.is_eof());
+        let concat = match stack.len() {
+            0 => AST::Empty,
+            1 => stack.pop().unwrap(),
+            _ => AST::Concat(stack),
+        };
+
+        if !self.parser.group_stack.is_empty() {
+            let mut group = self.parser.group_stack.pop().unwrap();
+            if let Some(AST::Alternation(alt)) = group.last_mut() {
+                alt.push(concat);
+            } else {
+                unreachable!();
+            }
+            Ok(match group.len() {
+                0 => AST::Empty,
+                1 => group.pop().unwrap(),
+                _ => AST::Concat(group),
+            })
+        } else {
+            Ok(concat)
+        }
     }
 
     fn parse_enclosed_class(&mut self) -> Result<ClassItem> {
@@ -205,7 +269,7 @@ impl<'a> ParserVM<'a> {
             bail!("Invalid class: unexpected eof after '['");
         }
 
-        let mut list = vec![];
+        let mut items = vec![];
         let negated = if self.char() == '^' {
             if !self.next() {
                 bail!("Invalid class: unexpected eof after '[^'");
@@ -217,7 +281,7 @@ impl<'a> ParserVM<'a> {
 
         // Note: ']' and '-' are ordinary characters if they are the first (or after negation).
         if self.char() == ']' || self.char() == '-' {
-            list.push(ClassItem::Ordinary(self.char()));
+            items.push(ClassItem::Ordinary(self.char()));
             if !self.next() {
                 bail!("Invalid class: unexpected eof after '{}'", self.char());
             }
@@ -229,7 +293,7 @@ impl<'a> ParserVM<'a> {
             match self.char() {
                 '[' => {
                     let item = self.parse_enclosed_class()?;
-                    list.push(item);
+                    items.push(item);
                 }
                 _ => {
                     if let Some('-') = self.peek() {
@@ -245,9 +309,9 @@ impl<'a> ParserVM<'a> {
                                 end
                             );
                         }
-                        list.push(ClassItem::Range(start, end));
+                        items.push(ClassItem::Range { start, end });
                     } else {
-                        list.push(ClassItem::Ordinary(self.char()));
+                        items.push(ClassItem::Ordinary(self.char()));
                     }
                     if !self.next() {
                         bail!("Invalid class: unexpected eof");
@@ -256,7 +320,7 @@ impl<'a> ParserVM<'a> {
             }
         }
         self.next();
-        Ok(AST::Class(negated, list))
+        Ok(AST::Class { negated, items })
     }
 
     fn parse_repetition(&mut self, mut stack: Vec<AST>, rep: RepetitionType) -> Result<Vec<AST>> {
@@ -344,9 +408,9 @@ impl<'a> ParserVM<'a> {
         let mut stack = vec![];
         while !self.is_eof() {
             match self.char() {
-                '(' => self.start_group(),
-                ')' => self.end_group(),
-                '|' => self.parse_alternate(),
+                '(' => stack = self.start_group(stack)?,
+                ')' => stack = self.end_group(stack)?,
+                '|' => stack = self.parse_alternate(stack)?,
                 '[' => stack.push(self.parse_class()?),
                 '?' => stack = self.parse_repetition(stack, RepetitionType::ZeroOrOne)?,
                 '*' => stack = self.parse_repetition(stack, RepetitionType::ZeroOrMore)?,
@@ -358,12 +422,7 @@ impl<'a> ParserVM<'a> {
                 _ => stack.push(self.parse_primitive()?),
             }
         }
-
-        match stack.len() {
-            0 => Ok(AST::Empty),
-            1 => Ok(stack.pop().unwrap()),
-            _ => Ok(AST::Concat(stack)),
-        }
+        self.finish_parse(stack)
     }
 }
 
@@ -456,14 +515,14 @@ mod tests {
         let ast = parser.parse("[abc]")?;
         assert_eq!(
             ast,
-            AST::Class(
-                false,
-                vec![
+            AST::Class {
+                negated: false,
+                items: vec![
                     ClassItem::Ordinary('a'),
                     ClassItem::Ordinary('b'),
                     ClassItem::Ordinary('c')
                 ]
-            )
+            }
         );
         Ok(())
     }
@@ -472,7 +531,16 @@ mod tests {
     fn test_range_class() -> Result<()> {
         let mut parser = Parser::new();
         let ast = parser.parse("[A-z]")?;
-        assert_eq!(ast, AST::Class(false, vec![ClassItem::Range('A', 'z')]));
+        assert_eq!(
+            ast,
+            AST::Class {
+                negated: false,
+                items: vec![ClassItem::Range {
+                    start: 'A',
+                    end: 'z'
+                }]
+            }
+        );
         Ok(())
     }
 
@@ -482,14 +550,31 @@ mod tests {
         let ast = parser.parse("[^a-z0-9 ]")?;
         assert_eq!(
             ast,
-            AST::Class(
-                true,
-                vec![
-                    ClassItem::Range('a', 'z'),
-                    ClassItem::Range('0', '9'),
+            AST::Class {
+                negated: true,
+                items: vec![
+                    ClassItem::Range {
+                        start: 'a',
+                        end: 'z'
+                    },
+                    ClassItem::Range {
+                        start: '0',
+                        end: '9'
+                    },
                     ClassItem::Ordinary(' ')
                 ]
-            )
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_alt() -> Result<()> {
+        let mut parser = Parser::new();
+        let ast = parser.parse("a|b")?;
+        assert_eq!(
+            ast,
+            AST::Alternation(vec![AST::Literal('a'), AST::Literal('b')])
         );
         Ok(())
     }
